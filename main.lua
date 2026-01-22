@@ -6,6 +6,7 @@ _G.AutoCollectQuest = true
 _G.AutoBuyWorld = true
 _G.AutoUpgrade = true
 _G.AutoClaimRank = true 
+_G.AutoVoidSpin = true
 _G.AutoGoldenConfig = {
     ["Enabled"] = true,
     ["Pets"] = {
@@ -550,15 +551,6 @@ end)
 for _, item in ipairs(workspace:GetDescendants()) do
     if item:IsA("BasePart") and not item:IsDescendantOf(game.Players) then
         item.Transparency = 1
-        item.CanCollide = false
-    end
-end
-
--- 2. Neo HumanoidRootPart của tất cả người chơi đang có trong server
-for _, player in ipairs(game.Players:GetPlayers()) do
-    local character = player.Character
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        character.HumanoidRootPart.Anchored = true
     end
 end
 
@@ -570,6 +562,27 @@ for _, gui in ipairs(playerGui:GetChildren()) do
         gui.Enabled = false
     end
 end
+
+task.spawn(function()
+    while _G.AutoVoidSpin do
+        -- Lấy dữ liệu lượt quay từ Replication module
+        local data = Replication.Data
+        local spins = data and data.Items and data.Items.VoidSpins or 0
+        
+        -- Chỉ quay nếu có lượt (> 0) và không đang trong quá trình quay (_G.Spinning)
+        if spins > 0 and not _G.Spinning then
+            -- Gọi server để quay
+            Network:InvokeServer("SpinWheel", "VoidSpinWheel")
+            print("Spun Void Wheel! Remaining: " .. (spins - 1))
+            
+            -- Đợi vòng quay kết thúc (khoảng 7 giây)
+            task.wait(7)
+        end
+        
+        task.wait(2) -- Kiểm tra lại sau mỗi 2 giây
+    end
+end)
+--------------------------
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
 local CoreGui = game:GetService('CoreGui')
@@ -591,17 +604,16 @@ Background.BackgroundTransparency = 0.5
 Background.BorderSizePixel = 0
 Background.Parent = ScreenGui
 
---// KHUNG CHÍNH CHỨA CHỮ (RESPONSIVE)
+--// KHUNG CHÍNH CHỨA CHỮ
 local MainFrame = Instance.new('Frame')
-MainFrame.Size = UDim2.new(0.9, 0, 0.9, 0) -- Chiếm 90% diện tích màn hình
+MainFrame.Size = UDim2.new(0.9, 0, 0.9, 0)
 MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 MainFrame.BackgroundTransparency = 1
 MainFrame.Parent = Background
 
---// KHÓA TỈ LỆ (Ngăn chặn chữ bị bóp méo khi kéo dài cửa sổ)
 local AspectRatio = Instance.new("UIAspectRatioConstraint")
-AspectRatio.AspectRatio = 1.6 -- Tỉ lệ khung hình rộng
+AspectRatio.AspectRatio = 1.4 -- Adjusted for the extra line
 AspectRatio.AspectType = Enum.AspectType.ScaleWithParentSize
 AspectRatio.Parent = MainFrame
 
@@ -609,9 +621,9 @@ local Layout = Instance.new('UIListLayout')
 Layout.Parent = MainFrame
 Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 Layout.VerticalAlignment = Enum.VerticalAlignment.Center
-Layout.Padding = UDim.new(0.015, 0) -- Giãn cách dựa trên % chiều cao
+Layout.Padding = UDim.new(0.012, 0)
 
---// HÀM TẠO LABEL LỚN VỚI TỰ ĐỘNG CĂN CHỈNH KÍCH THƯỚC
+--// HÀM TẠO LABEL
 local function createLabel(name, text, color, order)
     local label = Instance.new('TextLabel')
     label.Name = name
@@ -619,14 +631,13 @@ local function createLabel(name, text, color, order)
     label.TextColor3 = color
     label.Font = Enum.Font.LuckiestGuy
     label.BackgroundTransparency = 1
-    label.Size = UDim2.new(0.9, 0, 0.1, 0) -- Kích thước theo tỉ lệ %
-    label.TextScaled = true -- Quan trọng: Chữ tự to nhỏ theo khung
+    label.Size = UDim2.new(0.9, 0, 0.09, 0)
+    label.TextScaled = true 
     label.LayoutOrder = order
 
-    -- Giới hạn kích thước chữ (Không cho phép quá nhỏ hoặc quá to)
     local SizeConstraint = Instance.new("UITextSizeConstraint")
-    SizeConstraint.MaxTextSize = 100
-    SizeConstraint.MinTextSize = 12
+    SizeConstraint.MaxTextSize = 80
+    SizeConstraint.MinTextSize = 10
     SizeConstraint.Parent = label
 
     local UIStroke = Instance.new('UIStroke')
@@ -644,8 +655,23 @@ local TimeLabel = createLabel('TimeLabel', 'TIME: 00:00:00', Color3.fromRGB(200,
 local FPSLabel = createLabel('FPSLabel', 'FPS: 0', Color3.fromRGB(255, 180, 0), 3)
 local ClicksLabel = createLabel('ClicksLabel', 'CLICKS: 0', Color3.fromRGB(0, 255, 255), 4)
 local EggsLabel = createLabel('EggsLabel', 'EGGS: 0', Color3.fromRGB(255, 255, 0), 5)
-local RarestLabel = createLabel('RarestLabel', 'RAREST: 0', Color3.fromRGB(255, 0, 255), 6)
-local RebirthsLabel = createLabel('RebirthsLabel', 'REBIRTHS: 0', Color3.fromRGB(0, 255, 0), 7)
+local EggsMinLabel = createLabel('EggsMinLabel', 'EGGS/MIN: 0', Color3.fromRGB(255, 150, 0), 6) -- New Label
+local RarestLabel = createLabel('RarestLabel', 'RAREST: 0', Color3.fromRGB(255, 0, 255), 7)
+local RebirthsLabel = createLabel('RebirthsLabel', 'REBIRTHS: 0', Color3.fromRGB(0, 255, 0), 8)
+
+--// LOGIC EGGS PER MINUTE
+local eggHistory = {} -- Lưu trữ thời gian mỗi khi nhận trứng
+
+local function updateEggsPerMin()
+    local now = tick()
+    -- Xóa các bản ghi cũ hơn 60 giây
+    for i = #eggHistory, 1, -1 do
+        if now - eggHistory[i] > 60 then
+            table.remove(eggHistory, i)
+        end
+    end
+    EggsMinLabel.Text = "EGGS/MIN: " .. #eggHistory
+end
 
 --// LOGIC CẬP NHẬT LEADERSTATS
 local function updateLeaderstats()
@@ -655,7 +681,12 @@ local function updateLeaderstats()
             local stat = leaderstats:FindFirstChild(statName)
             if stat then
                 label.Text = prefix .. ": " .. tostring(stat.Value)
+                
                 stat:GetPropertyChangedSignal("Value"):Connect(function()
+                    -- Nếu là Eggs, ghi nhận thời gian để tính Eggs/Min
+                    if statName == "Eggs" then
+                        table.insert(eggHistory, tick())
+                    end
                     label.Text = prefix .. ": " .. tostring(stat.Value)
                 end)
             end
@@ -668,21 +699,35 @@ local function updateLeaderstats()
 end
 task.spawn(updateLeaderstats)
 
---// LOGIC FPS & TIME
+--// LOGIC FPS, TIME & EPM LOOP
 local startTime = os.time()
 local lastUpdate = tick()
 local frames = 0
 RunService.RenderStepped:Connect(function()
     frames = frames + 1
     local now = tick()
+    
     if now - lastUpdate >= 1 then
         FPSLabel.Text = "FPS: " .. tostring(frames)
         frames = 0
         lastUpdate = now
+        updateEggsPerMin() -- Cập nhật Eggs/Min mỗi giây
     end
+    
     local elapsed = os.time() - startTime
     local hours = math.floor(elapsed / 3600)
     local mins = math.floor((elapsed % 3600) / 60)
     local secs = elapsed % 60
     TimeLabel.Text = string.format('TIME: %02d:%02d:%02d', hours, mins, secs)
 end)
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- Vòng lặp nhấn phím P liên tục
+while true do
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.P, false, game)
+    task.wait(0.1) -- Tốc độ nhấn (0.1 giây)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.P, false, game)
+    task.wait(50)
+end
+----------------
+--end
